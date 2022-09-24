@@ -1,0 +1,10 @@
+[package]
+name = "rust-sdf-tool"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+freetype-rs = "0.31.0"
+image = "0.24.3"
