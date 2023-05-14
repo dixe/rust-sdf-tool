@@ -1,55 +1,83 @@
 use std::fmt::Write;
 use std::io::Cursor;
 use freetype::{Library, face::LoadFlag};
-use image::{ImageBuffer, RgbImage, Rgb};
-mod sdffont;
+use image::{ImageBuffer, RgbaImage, Rgba};
+use crate::fntfont::*;
+mod fntfont;
 
 // https://freetype.org/freetype2/docs/glyphs/glyphs-3.html
 
-fn main() {
 
-    let lib = Library::init().unwrap();
-    let face = lib.new_face("E:/repos/rust-sdf-tool/test_fonts/calibri.ttf",0).unwrap();
-
-
-    let sdf_chr_info = generate_sdf_info_char('ø', &face, 32);
-    sdf_chr_info.img.save("sdf.png");
-
-    let lineheight = face.height() >> 6;
-    println!("Line H{:?}", lineheight);
-
-    //let img = create_raster_img_with_baseline('\u{43}', &face, 128);
-    //img.save("A.png");
-
-
+#[derive(Debug, Clone, Copy)]
+pub struct GenInfo {
+    upscale_res: u32,
+    padding: u32,
+    spread: u32
 }
 
 
-fn generate_sdf_info_char(chr: char, face: &freetype::Face, font_size: u32)  -> CharInfo {
+
+fn main() {
+
+    let args = std::env::args();
+
+    let size : u32 = std::env::args().nth(1).expect("no size given").parse().unwrap();
+
+    let lib = Library::init().unwrap();
+    // TODO: take path as arg param
+    let face = lib.new_face("E:/repos/rust-sdf-tool/test_fonts/consolas.ttf", 0).unwrap();
+
+
+    //let img = create_raster_img_with_baseline('\u{61}', &face, 12);
+    //img.save("A.png");
+
+    let upscale_res = size;
+    let gen_info = GenInfo {
+        upscale_res,
+        padding: (0.125 * upscale_res as f64) as u32,// this will result in padding of 4 px in 32 px font size on each side
+        spread: upscale_res / 4
+    };
+
+
+    let mut chars : Vec::<(CharInfo,RgbaImage)> = vec![];
+
+    // generate info for all chars 0..250
+    for chr in 32..255 {
+        let (chr_info, img) = generate_char_info(chr as u32, &face, gen_info);
+        chars.push((chr_info, img));
+        print!("\r{:?}/255",chr);
+    }
+    println!("");
+
+    let lineheight = face.height() >> 6;
+
+    write_font_files(&face, gen_info, chars);
+}
+
+
+fn generate_char_info(chr: u32, face: &freetype::Face, gen_info: GenInfo)  -> (CharInfo, RgbaImage) {
 
     let mut s = "".to_string();
 
     //std::io::stdin().read_line(&mut s).expect("Rad line");
 
-    let upscale_res = 32;
-    // padding on each of the 4 sides
-    let padding = (0.125 * upscale_res as f64) as u32;  // this will result in padding of 4 px in 32 px font size on each side
-
-    let spread = upscale_res / 4;
-
-    face.set_pixel_sizes(upscale_res, upscale_res).unwrap();
+    face.set_pixel_sizes(gen_info.upscale_res, gen_info.upscale_res).unwrap();
     face.load_char(chr as usize, LoadFlag::RENDER).unwrap();
+
+    let padding = gen_info.padding;
+    let spread = gen_info.spread;
 
     let glyph = face.glyph();
     let bitmap = glyph.bitmap();
 
     let g = glyph.get_glyph().unwrap();
 
+    let g_metrics = glyph.metrics();
+
     let rows = bitmap.rows() as u32;
     let width = bitmap.width() as u32;
     let bitmap_buffer = bitmap.buffer();
 
-    println!("Size: {:?}", (width, rows));
 
     // buffer with padding
     let sdf_h = rows + padding * 2;
@@ -65,32 +93,27 @@ fn generate_sdf_info_char(chr: char, face: &freetype::Face, font_size: u32)  -> 
         }
     }
 
-    let scale_x = width as f64 / upscale_res as f64;
-    let scale_y = rows as f64 / upscale_res as f64;
 
-    let out_w = (scale_x * font_size as f64).round() as u32;
-    let out_h = (scale_y * font_size as f64).round() as u32;
-
-    println!("Output size{:?}",(out_w, out_h));
-
-
-
-    let mut tmp_img: RgbImage = ImageBuffer::new(width, rows);
+    let mut tmp_img: RgbaImage = ImageBuffer::new(width, rows);
 
     for y in 0..tmp_img.height() {
         for x in 0..tmp_img.width() {
             let val = bitmap_buffer[(y * width + x) as usize];
-            tmp_img.put_pixel(x,y,  Rgb([val, val, val]));
+            tmp_img.put_pixel(x,y,  Rgba([val, val, val, val]));
         }
     }
 
-    tmp_img.save("Tmp.png");
+    // with padding for sdf
+    //let mut img: RgbaImage = ImageBuffer::new(width + padding * 2, rows + padding * 2);
 
-    let mut img: RgbImage = ImageBuffer::new(width + padding * 2, rows + padding * 2);
+    // for regular font atlas
+    let mut img: RgbaImage = ImageBuffer::new(width, rows);
 
     let mut max_d = 0.0;
     for y in 0..img.height() {
         for x in 0..img.width() {
+            // sdf
+            /*
 
             let px_v = 0.0 ;
 
@@ -98,24 +121,32 @@ fn generate_sdf_info_char(chr: char, face: &freetype::Face, font_size: u32)  -> 
 
             let mut val = (px_v * 255.0) as u8;
 
+            let mut c = 0;
+            if val > 0 {
+                c = 255
+            };
 
+            //img.put_pixel(x, y, Rgba([c, c, c, val]));
+            */
+            // regular texture
 
-            img.put_pixel(x, y, Rgb([val, val, val]));
+            let v = bitmap_buffer[(y * width + x) as usize];
+            img.put_pixel(x, y, Rgba([0, 0, 0, v]));
         }
     }
-    //let px_v = px_value(bitmap_buffer, width as i32, rows as i32, padding as i32, 31, 31, spread as i32);
 
 
-    println!("{:?}", (img.width(), img.height(), padding));
-
-    CharInfo {
+    (CharInfo {
         chr: chr as u32,
         advance_x: glyph.advance().x >> 6,
         advance_y: 0, // also not used by text renderer. Is used when align horizontal
-        padding_x: padding as i32,
-        padding_y: padding as i32,
-        img
-    }
+        padding_x: gen_info.padding as i32,
+        padding_y: gen_info.padding as i32,
+        offset_x: g_metrics.horiBearingX >> 6,
+        offset_y: g_metrics.horiBearingY >> 6,
+        height: rows,
+        width: width
+    }, img)
 }
 
 
@@ -201,25 +232,7 @@ fn px_value(buffer: &[u8], buf_w: i32, buf_h: i32, padding: i32, sdf_x: i32, sdf
 
 
 
-
-
-#[derive(Clone, Copy, Debug)]
-struct FaceInfo {
-    pixel_h: u32,
-    pixel_w: u32
-}
-
-#[derive(Clone, Debug)]
-struct CharInfo {
-    chr: u32,
-    advance_x: i32,
-    advance_y: i32,
-    padding_x: i32,
-    padding_y: i32,
-    img: RgbImage
-}
-
-fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: u32) -> RgbImage {
+fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: u32) -> RgbaImage {
 
     face.set_pixel_sizes(font_size, font_size).unwrap();
     println!("{:?}", chr);
@@ -231,10 +244,9 @@ fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: 
     let max_descent = metrics.descender >> 6;
     let max_ascent = metrics.ascender >> 6;
 
-    let face_info = FaceInfo {
-        pixel_h: ( max_ascent + i32::abs(max_descent)) as  u32,
-        pixel_w: font_size
-    };
+
+    let pixel_h = ( max_ascent + i32::abs(max_descent)) as  u32;
+    let pixel_w =  font_size;
 
     let bitmap = glyph.bitmap();
 
@@ -246,7 +258,7 @@ fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: 
     let width = bitmap.width();
     let buffer = bitmap.buffer();
 
-    let mut img: RgbImage = ImageBuffer::new(face_info.pixel_w, face_info.pixel_h);
+    let mut img: RgbaImage = ImageBuffer::new(pixel_w, pixel_h);
 
     let rows = bitmap.rows();
     let width = bitmap.width();
@@ -263,22 +275,23 @@ fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: 
 
     let advance_y = glyph.advance().y >> 6;
 
-    let x_offset = (face_info.pixel_w as i32 - advance_x) / 2;
+    let x_offset = (pixel_w as i32 - advance_x) / 2;
 
 
     let bearing_y = g_metrics.horiBearingY >> 6;
-    let y_offset =  (face_info.pixel_h as i32 - bearing_y) /2;
+    let y_offset =  (pixel_h as i32 - bearing_y) /2;
 
-    println!("{:?}", (x_offset, y_offset));
 
-    println!("H  = {:?}",g_metrics.height >> 6);
 
     // Draw baseline, relative to char
     let baseline_h = (y_offset + bearing_y) as u32;
-    for y in 0..face_info.pixel_h {
-        for x in 0..face_info.pixel_w {
+
+    println!("baseline: {:?}", (baseline_h));
+
+    for y in 0..pixel_h {
+        for x in 0..pixel_w {
             if y == baseline_h {
-                img.put_pixel(x as u32, y as u32, Rgb([255, 0, 255]));
+                img.put_pixel(x as u32, y as u32, Rgba([255, 0, 255, 255]));
             }
         }
     }
@@ -291,8 +304,8 @@ fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: 
             let x_index = x_offset + x;
 
             if val > 0 {
-                img.put_pixel(x_index as u32, y_index as u32, Rgb([val, val, val]));
-                //img.put_pixel(x_index as u32, y as u32, Rgb([val, val, val]));
+                img.put_pixel(x_index as u32, y_index as u32, Rgba([0, 0, 0, val]));
+
             }
         }
     }
@@ -300,16 +313,18 @@ fn create_raster_img_with_baseline(chr: char, face: &freetype::Face, font_size: 
     img
 }
 
-
-fn create_sdf(img: RgbImage, info: CharInfo ){
-
+#[derive(Clone, Debug)]
+pub struct CharInfo {
+    chr: u32,
+    width: u32,
+    height: u32,
+    advance_x: i32,
+    advance_y: i32,
+    padding_x: i32,
+    padding_y: i32,
+    offset_x: i32,
+    offset_y: i32
 }
-fn create_font(face: freetype::Face) {
-
-
-
-}
-
 
 
 
@@ -339,7 +354,7 @@ mod test {
         println!("{:?}", v);
 
 
-        assert!(false);
+        assert!(true);
 
 
 
